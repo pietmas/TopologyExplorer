@@ -1,14 +1,22 @@
 #include "topo/graph.hpp"
+#include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepGProp.hxx>
+#include <BRepLProp_SLProps.hxx>
 #include <BRepTools.hxx>
 #include <BRep_Builder.hxx>
+#include <BRep_Tool.hxx>
 #include <GProp_GProps.hxx>
+#include <Geom2d_Curve.hxx>
 #include <TopExp.hxx>
+#include <TopExp_Explorer.hxx>
 #include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <TopoDS.hxx>
+#include <algorithm>
+#include <cmath>
+#include <gp_Vec.hxx>
 #include <sstream>
 #include <stdexcept>
 
@@ -49,6 +57,60 @@ static const char *surfaceName(GeomAbs_SurfaceType t) {
   }
 }
 
+static TopAbs_Orientation edgeOrientationInFace(const TopoDS_Edge &edge,
+                                                const TopoDS_Face &face) {
+  for (TopExp_Explorer ex(face, TopAbs_EDGE); ex.More(); ex.Next())
+    if (ex.Current().IsSame(edge))
+      return ex.Current().Orientation();
+  return TopAbs_EXTERNAL;
+}
+
+static bool faceNormalAtEdge(const TopoDS_Face &face, const TopoDS_Edge &edge,
+                             double t, gp_Vec &normal) {
+  double f, l;
+  Handle(Geom2d_Curve) pc = BRep_Tool::CurveOnSurface(edge, face, f, l);
+  if (pc.IsNull())
+    return false;
+  gp_Pnt2d uv = pc->Value(t);
+  BRepAdaptor_Surface s(face);
+  BRepLProp_SLProps props(s, uv.X(), uv.Y(), 1, 1e-6);
+  if (!props.IsNormalDefined())
+    return false;
+  normal = gp_Vec(props.Normal());
+  if (face.Orientation() == TopAbs_REVERSED)
+    normal.Reverse();
+  return true;
+}
+
+static EdgeKind classifyEdge(const TopoDS_Edge &edge, const TopoDS_Face &fa,
+                             const TopoDS_Face &fb, double &angleDeg) {
+  TopAbs_Orientation oa = edgeOrientationInFace(edge, fa);
+  if (oa != TopAbs_FORWARD && oa != TopAbs_REVERSED)
+    return EdgeKind::Unknown;
+
+  BRepAdaptor_Curve c(edge);
+  double t = 0.5 * (c.FirstParameter() + c.LastParameter());
+  gp_Pnt p;
+  gp_Vec tangent;
+  c.D1(t, p, tangent);
+  if (tangent.Magnitude() < 1e-12)
+    return EdgeKind::Unknown;
+  if (oa == TopAbs_REVERSED)
+    tangent.Reverse();
+
+  gp_Vec na, nb;
+  if (!faceNormalAtEdge(fa, edge, t, na) || !faceNormalAtEdge(fb, edge, t, nb))
+    return EdgeKind::Unknown;
+
+  double dot = na.Normalized().Dot(nb.Normalized());
+  angleDeg = std::acos(std::max(-1.0, std::min(1.0, dot))) * 180.0 / M_PI;
+  if (angleDeg < 1e-3)
+    return EdgeKind::Smooth;
+
+  double s = na.Crossed(nb).Dot(tangent.Normalized());
+  return s > 0 ? EdgeKind::Convex : EdgeKind::Concave;
+}
+
 FaceGraph buildFaceGraph(const TopoDS_Shape &shape) {
   TopTools_IndexedMapOfShape faces, edges, verts, wires;
   TopExp::MapShapes(shape, TopAbs_FACE, faces);
@@ -60,8 +122,6 @@ FaceGraph buildFaceGraph(const TopoDS_Shape &shape) {
   g.faceCount = faces.Extent();
   g.edgeCount = edges.Extent();
   g.vertexCount = verts.Extent();
-  // Euler-Poincare: V - E + F - (L - F) = 2(S - G). Plain V - E + F misses
-  // faces with inner loops (L > F), so it stays 2 for parts with holes.
   int loopCount = wires.Extent();
   g.eulerCharacteristic =
       g.vertexCount - g.edgeCount + g.faceCount - (loopCount - g.faceCount);
@@ -85,8 +145,11 @@ FaceGraph buildFaceGraph(const TopoDS_Shape &shape) {
     int fb = faces.FindIndex(adj.Last());
     if (fa == fb)
       continue; // seam edge on one face
-    g.arcs.push_back({edges.FindIndex(edgeToFaces.FindKey(e)), fa, fb,
-                      EdgeKind::Unknown, 0.0});
+    const TopoDS_Edge &edge = TopoDS::Edge(edgeToFaces.FindKey(e));
+    double ang = 0.0;
+    EdgeKind k = classifyEdge(edge, TopoDS::Face(adj.First()),
+                              TopoDS::Face(adj.Last()), ang);
+    g.arcs.push_back({edges.FindIndex(edge), fa, fb, k, ang});
   }
   return g;
 }
