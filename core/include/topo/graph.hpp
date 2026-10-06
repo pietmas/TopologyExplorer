@@ -3,31 +3,41 @@
 #include <string>
 #include <vector>
 
-namespace topo {
+namespace topo
+{
 
-enum class EdgeKind { Convex, Concave, Smooth, Unknown };
-
-struct FaceNode {
-  int id;
-  std::string surfaceType;
-  double area;
+enum class EdgeKind
+{
+    Convex,
+    Concave,
+    Smooth,
+    Unknown
 };
 
-struct EdgeArc {
-  int edgeId;
-  int faceA;
-  int faceB;
-  EdgeKind kind;
-  double angleDeg;
+struct FaceNode
+{
+    int id;
+    std::string surfaceType;
+    double area;
 };
 
-struct FaceGraph {
-  std::vector<FaceNode> faces;
-  std::vector<EdgeArc> arcs;
-  int vertexCount = 0;
-  int edgeCount = 0;
-  int faceCount = 0;
-  int eulerCharacteristic = 0;
+struct EdgeArc
+{
+    int edgeId;
+    int faceA;
+    int faceB;
+    EdgeKind kind;
+    double angleDeg;
+};
+
+struct FaceGraph
+{
+    std::vector<FaceNode> faces;
+    std::vector<EdgeArc> arcs;
+    int vertexCount = 0;
+    int edgeCount = 0;
+    int faceCount = 0;
+    int eulerCharacteristic = 0;
 };
 
 TopoDS_Shape loadBrepString(const std::string &data);
