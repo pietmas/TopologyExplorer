@@ -9,7 +9,7 @@
 #include <GProp_GProps.hxx>
 #include <Geom2d_Curve.hxx>
 #include <TopExp.hxx>
-#include <TopExp_Explorer.hxx>P
+#include <TopExp_Explorer.hxx>
 #include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopTools_ListOfShape.hxx>
@@ -175,13 +175,13 @@ FaceGraph buildFaceGraph(const TopoDS_Shape &shape)
         const TopTools_ListOfShape &adj = edgeToFaces(e);
         if (adj.Extent() != 2)
         {
-            continue; // boundary or non-manifold
+            continue;
         }
         int fa = faces.FindIndex(adj.First());
         int fb = faces.FindIndex(adj.Last());
         if (fa == fb)
         {
-            continue; // seam edge on one face
+            continue;
         }
         const TopoDS_Edge &edge = TopoDS::Edge(edgeToFaces.FindKey(e));
         double ang = 0.0;
