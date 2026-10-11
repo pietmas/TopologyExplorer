@@ -41,6 +41,7 @@ struct FaceGraph
 };
 
 TopoDS_Shape loadBrepString(const std::string &data);
+std::string writeBrepString(const TopoDS_Shape &shape);
 FaceGraph buildFaceGraph(const TopoDS_Shape &shape);
 
 } // namespace topo

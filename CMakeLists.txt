@@ -11,7 +11,8 @@ find_package(pybind11 CONFIG REQUIRED)
 
 add_library(topocore STATIC
     core/src/graph.cpp
-    core/src/features.cpp)
+    core/src/features.cpp
+    core/src/defeature.cpp)
 target_include_directories(topocore PUBLIC core/include ${OpenCASCADE_INCLUDE_DIR})
 target_link_libraries(topocore PUBLIC
     TKernel TKMath TKG2d TKG3d TKGeomBase TKBRep TKGeomAlgo TKTopAlgo

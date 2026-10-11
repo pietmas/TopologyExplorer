@@ -141,3 +141,59 @@ def test_boss(round_boss, faces):
 def test_no_features(part):
     feats, _ = _features(part())
     assert feats == []
+
+
+def _strip(part, *kinds):
+    brep = to_brep_string(part)
+    doomed = sorted({i for f in te.recognize(brep) if f.type in kinds for i in f.face_ids})
+    ok, out, face_map = te.defeature(brep, doomed)
+    return ok, out, face_map, doomed
+
+
+def _counts(brep):
+    g = te.analyze(brep)
+    return g.face_count, g.edge_count, g.vertex_count
+
+
+@pytest.mark.parametrize(
+    "part,kind",
+    [
+        (plate_with_holes, te.FeatureType.Hole),
+        (block_with_blind_hole, te.FeatureType.Hole),
+        (filleted_block, te.FeatureType.Fillet),
+        (pocketed_block, te.FeatureType.Pocket),
+        (block_with_boss, te.FeatureType.Boss),
+    ],
+)
+def test_defeatured_back_to_a_box(part, kind):
+    ok, out, _, _ = _strip(part(), kind)
+    assert ok
+    assert _counts(out) == (6, 12, 8)
+    assert te.recognize(out) == []
+
+
+def test_bracket_loses_fillets_keeps_step():
+    ok, out, _, _ = _strip(filleted_bracket(), te.FeatureType.Fillet)
+    assert ok
+    assert _counts(out) == _counts(to_brep_string(l_block()))
+
+
+@pytest.mark.parametrize("part", [plate_with_holes, filleted_block, filleted_bracket])
+def test_no_face_goes_missing(part):
+    ok, out, face_map, doomed = _strip(part(), te.FeatureType.Hole, te.FeatureType.Fillet)
+    assert ok
+    born = set()
+    for old, track in face_map.items():
+        if old in doomed:
+            assert track.fate == te.FaceFate.Deleted
+        else:
+            assert track.fate in (te.FaceFate.Kept, te.FaceFate.Modified)
+            assert track.new_ids and 0 not in track.new_ids
+            born.update(track.new_ids)
+    assert born == set(range(1, te.analyze(out).face_count + 1))
+
+
+def test_split_hole_refuses_politely():
+    ok, out, _, _ = _strip(split_hole_plate(), te.FeatureType.Hole)
+    assert not ok
+    assert out == ""

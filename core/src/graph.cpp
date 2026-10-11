@@ -36,6 +36,13 @@ TopoDS_Shape loadBrepString(const std::string &data)
     return shape;
 }
 
+std::string writeBrepString(const TopoDS_Shape &shape)
+{
+    std::ostringstream out;
+    BRepTools::Write(shape, out);
+    return out.str();
+}
+
 static const char *surfaceName(GeomAbs_SurfaceType t)
 {
     switch (t)

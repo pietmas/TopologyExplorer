@@ -1,3 +1,4 @@
+#include "topo/defeature.hpp"
 #include "topo/features.hpp"
 #include "topo/graph.hpp"
 #include <pybind11/pybind11.h>
@@ -57,5 +58,25 @@ PYBIND11_MODULE(topoexplorer, m)
     m.def(
         "analyze",
         [](const std::string &brep) { return topo::buildFaceGraph(topo::loadBrepString(brep)); }
+    );
+
+    py::enum_<topo::FaceFate>(m, "FaceFate")
+        .value("Kept", topo::FaceFate::Kept)
+        .value("Modified", topo::FaceFate::Modified)
+        .value("Deleted", topo::FaceFate::Deleted)
+        .value("Lost", topo::FaceFate::Lost);
+
+    py::class_<topo::FaceTrack>(m, "FaceTrack")
+        .def_readonly("fate", &topo::FaceTrack::fate)
+        .def_readonly("new_ids", &topo::FaceTrack::newIds);
+
+    m.def(
+        "defeature",
+        [](const std::string &brep, const std::vector<int> &faceIds)
+        {
+            topo::DefeatureResult r = topo::defeature(topo::loadBrepString(brep), faceIds);
+            std::string out = r.ok ? topo::writeBrepString(r.shape) : "";
+            return py::make_tuple(r.ok, out, r.faceMap);
+        }
     );
 }
