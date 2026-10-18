@@ -17,7 +17,8 @@ PYBIND11_MODULE(topoexplorer, m)
     py::class_<topo::FaceNode>(m, "FaceNode")
         .def_readonly("id", &topo::FaceNode::id)
         .def_readonly("surface_type", &topo::FaceNode::surfaceType)
-        .def_readonly("area", &topo::FaceNode::area);
+        .def_readonly("area", &topo::FaceNode::area)
+        .def_readonly("center", &topo::FaceNode::center);
 
     py::class_<topo::EdgeArc>(m, "EdgeArc")
         .def_readonly("edge_id", &topo::EdgeArc::edgeId)

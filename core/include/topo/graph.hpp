@@ -1,5 +1,6 @@
 #pragma once
 #include <TopoDS_Shape.hxx>
+#include <array>
 #include <string>
 #include <vector>
 
@@ -19,6 +20,7 @@ struct FaceNode
     int id;
     std::string surfaceType;
     double area;
+    std::array<double, 3> center;
 };
 
 struct EdgeArc

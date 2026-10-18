@@ -171,7 +171,8 @@ FaceGraph buildFaceGraph(const TopoDS_Shape &shape)
         BRepAdaptor_Surface s(f);
         GProp_GProps props;
         BRepGProp::SurfaceProperties(f, props);
-        g.faces.push_back({i, surfaceName(s.GetType()), props.Mass()});
+        gp_Pnt c = props.CentreOfMass();
+        g.faces.push_back({i, surfaceName(s.GetType()), props.Mass(), {c.X(), c.Y(), c.Z()}});
     }
 
     TopTools_IndexedDataMapOfShapeListOfShape edgeToFaces;
