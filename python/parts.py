@@ -1,4 +1,5 @@
 from build123d import *
+from OCP.BOPAlgo import BOPAlgo_Builder
 from OCP.BRepAlgoAPI import BRepAlgoAPI_Fuse
 
 
@@ -76,3 +77,39 @@ def filleted_bracket(inner_r=3, outer_r=5):
 def split_hole_plate():
     a, b = plate_with_holes(1).split(Plane.XZ, keep=Keep.BOTH)
     return Compound(BRepAlgoAPI_Fuse(a.wrapped, b.wrapped).Shape())
+
+
+def ball(r=10):
+    return Sphere(r)
+
+
+def ring(major=10, minor=2):
+    return Torus(major, minor)
+
+
+def two_blocks():
+    return Compound([Box(10, 10, 10), Pos(20, 0, 0) * Box(10, 10, 10)])
+
+
+def glued_blocks():
+    b = BOPAlgo_Builder()
+    b.AddArgument(Box(10, 10, 10).wrapped)
+    b.AddArgument((Pos(10, 0, 0) * Box(10, 10, 10)).wrapped)
+    b.Perform()
+    return Compound(b.Shape())
+
+
+def flat_sheet():
+    return Face.make_rect(10, 10)
+
+
+def lofted_pocket():
+    with BuildPart() as p:
+        Box(60, 40, 20)
+        with BuildPart(mode=Mode.SUBTRACT):
+            with BuildSketch(Plane.XY.offset(10)):
+                Rectangle(30, 20)
+            with BuildSketch(Plane.XY.offset(2)):
+                Circle(6)
+            loft()
+    return p.part

@@ -30,6 +30,7 @@ struct EdgeArc
     int faceB;
     EdgeKind kind;
     double angleDeg;
+    double angleTolDeg;
 };
 
 struct FaceGraph
@@ -40,9 +41,14 @@ struct FaceGraph
     int edgeCount = 0;
     int faceCount = 0;
     int eulerCharacteristic = 0;
+    int shellCount = 0;
+    int genus = -1;
+    int freeEdgeCount = 0;
+    int nonManifoldEdgeCount = 0;
+    bool repaired = false;
 };
 
-TopoDS_Shape loadBrepString(const std::string &data);
+TopoDS_Shape loadBrepString(const std::string &data, bool *repaired = nullptr);
 std::string writeBrepString(const TopoDS_Shape &shape);
 FaceGraph buildFaceGraph(const TopoDS_Shape &shape);
 

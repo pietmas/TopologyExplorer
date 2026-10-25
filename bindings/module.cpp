@@ -25,7 +25,8 @@ PYBIND11_MODULE(topoexplorer, m)
         .def_readonly("face_a", &topo::EdgeArc::faceA)
         .def_readonly("face_b", &topo::EdgeArc::faceB)
         .def_readonly("kind", &topo::EdgeArc::kind)
-        .def_readonly("angle_deg", &topo::EdgeArc::angleDeg);
+        .def_readonly("angle_deg", &topo::EdgeArc::angleDeg)
+        .def_readonly("angle_tol_deg", &topo::EdgeArc::angleTolDeg);
 
     py::class_<topo::FaceGraph>(m, "FaceGraph")
         .def_readonly("faces", &topo::FaceGraph::faces)
@@ -33,7 +34,12 @@ PYBIND11_MODULE(topoexplorer, m)
         .def_readonly("vertex_count", &topo::FaceGraph::vertexCount)
         .def_readonly("edge_count", &topo::FaceGraph::edgeCount)
         .def_readonly("face_count", &topo::FaceGraph::faceCount)
-        .def_readonly("euler", &topo::FaceGraph::eulerCharacteristic);
+        .def_readonly("euler", &topo::FaceGraph::eulerCharacteristic)
+        .def_readonly("shell_count", &topo::FaceGraph::shellCount)
+        .def_readonly("genus", &topo::FaceGraph::genus)
+        .def_readonly("free_edge_count", &topo::FaceGraph::freeEdgeCount)
+        .def_readonly("non_manifold_edge_count", &topo::FaceGraph::nonManifoldEdgeCount)
+        .def_readonly("repaired", &topo::FaceGraph::repaired);
 
     py::enum_<topo::FeatureType>(m, "FeatureType")
         .value("Hole", topo::FeatureType::Hole)
@@ -58,7 +64,13 @@ PYBIND11_MODULE(topoexplorer, m)
 
     m.def(
         "analyze",
-        [](const std::string &brep) { return topo::buildFaceGraph(topo::loadBrepString(brep)); }
+        [](const std::string &brep)
+        {
+            bool repaired = false;
+            topo::FaceGraph g = topo::buildFaceGraph(topo::loadBrepString(brep, &repaired));
+            g.repaired = repaired;
+            return g;
+        }
     );
 
     py::enum_<topo::FaceFate>(m, "FaceFate")

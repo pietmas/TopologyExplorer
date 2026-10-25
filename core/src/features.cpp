@@ -1,7 +1,11 @@
 #include "topo/features.hpp"
 #include <BRepAdaptor_Surface.hxx>
+#include <BRepBndLib.hxx>
 #include <BRepLProp_SLProps.hxx>
 #include <BRepTools.hxx>
+#include <BRep_Tool.hxx>
+#include <Bnd_Box.hxx>
+#include <Precision.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
@@ -16,7 +20,27 @@
 namespace topo
 {
 
-static const double tol = 1e-6;
+static double linTol(const TopoDS_Face &f)
+{
+    return std::max(Precision::Confusion(), BRep_Tool::Tolerance(f));
+}
+
+static double linTol(const TopoDS_Face &a, const TopoDS_Face &b)
+{
+    return std::max(linTol(a), linTol(b));
+}
+
+static double angTol(double lin, double partSize)
+{
+    return std::max(Precision::Angular(), partSize > lin ? lin / partSize : 0.0);
+}
+
+static double partSizeOf(const TopoDS_Shape &shape)
+{
+    Bnd_Box box;
+    BRepBndLib::Add(shape, box);
+    return box.IsVoid() ? 0.0 : std::sqrt(box.SquareExtent());
+}
 
 struct FaceInfo
 {
@@ -42,7 +66,7 @@ static void outwardNormal(const TopoDS_Face &f, gp_Pnt &p, gp_Vec &n)
     double u0, u1, v0, v1;
     BRepTools::UVBounds(f, u0, u1, v0, v1);
     BRepAdaptor_Surface s(f);
-    BRepLProp_SLProps props(s, 0.5 * (u0 + u1), 0.5 * (v0 + v1), 1, tol);
+    BRepLProp_SLProps props(s, 0.5 * (u0 + u1), 0.5 * (v0 + v1), 1, Precision::Confusion());
     p = props.Value();
     n = gp_Vec();
     if (props.IsNormalDefined())
@@ -76,7 +100,7 @@ static bool pointsInward(const FaceInfo &fi)
         gp_Vec v(t.Location(), fi.point);
         gp_Vec d(t.Axis().Direction());
         gp_Vec flat = v - d * v.Dot(d);
-        if (flat.Magnitude() < tol)
+        if (flat.Magnitude() < linTol(fi.face))
         {
             return false;
         }
@@ -115,24 +139,32 @@ static double angleAround(const TopoDS_Face &f)
     return u1 - u0;
 }
 
-static bool sameCylinder(const TopoDS_Face &a, const TopoDS_Face &b)
+static bool fullTurn(double angle, const TopoDS_Face &f)
+{
+    double r = radiusOf(f);
+    double tol = r > 0.0 ? linTol(f) / r : Precision::Angular();
+    return angle >= 2 * M_PI - tol;
+}
+
+static bool sameCylinder(const TopoDS_Face &a, const TopoDS_Face &b, double partSize)
 {
     gp_Cylinder ca = BRepAdaptor_Surface(a).Cylinder();
     gp_Cylinder cb = BRepAdaptor_Surface(b).Cylinder();
-    if (std::abs(ca.Radius() - cb.Radius()) > tol)
+    double lin = linTol(a, b);
+    if (std::abs(ca.Radius() - cb.Radius()) > lin)
     {
         return false;
     }
-    if (!ca.Axis().IsParallel(cb.Axis(), tol))
+    if (!ca.Axis().IsParallel(cb.Axis(), angTol(lin, partSize)))
     {
         return false;
     }
-    return gp_Lin(ca.Axis()).Distance(cb.Axis().Location()) < tol;
+    return gp_Lin(ca.Axis()).Distance(cb.Axis().Location()) < lin;
 }
 
 static bool isRightAngle(const EdgeArc &a)
 {
-    return std::abs(a.angleDeg - 90.0) < 1e-3;
+    return std::abs(a.angleDeg - 90.0) < a.angleTolDeg;
 }
 
 static int findGroup(std::vector<int> &group, int f)
@@ -147,6 +179,7 @@ static int findGroup(std::vector<int> &group, int f)
 static void findHoles(
     std::vector<FaceInfo> &info,
     const FaceGraph &g,
+    double partSize,
     std::vector<bool> &used,
     std::vector<Feature> &out
 )
@@ -169,7 +202,7 @@ static void findHoles(
         {
             continue;
         }
-        if (sameCylinder(info[a.faceA].face, info[a.faceB].face))
+        if (sameCylinder(info[a.faceA].face, info[a.faceB].face, partSize))
         {
             group[findGroup(group, a.faceA)] = findGroup(group, a.faceB);
         }
@@ -192,7 +225,7 @@ static void findHoles(
         {
             total += angleAround(info[f].face);
         }
-        if (total < 2 * M_PI - tol)
+        if (!fullTurn(total, info[faces[0]].face))
         {
             continue;
         }
@@ -212,7 +245,8 @@ static void findHoles(
                 {
                     continue;
                 }
-                if (!gp_Vec(cyl.Axis().Direction()).IsParallel(fl.normal, tol))
+                double ang = angTol(linTol(info[f].face, fl.face), partSize);
+                if (!gp_Vec(cyl.Axis().Direction()).IsParallel(fl.normal, ang))
                 {
                     continue;
                 }
@@ -236,8 +270,12 @@ static void findHoles(
     }
 }
 
-static void
-findFillets(std::vector<FaceInfo> &info, std::vector<bool> &used, std::vector<Feature> &out)
+static void findFillets(
+    std::vector<FaceInfo> &info,
+    double partSize,
+    std::vector<bool> &used,
+    std::vector<Feature> &out
+)
 {
     int n = info.size() - 1;
     for (int i = 1; i <= n; ++i)
@@ -251,7 +289,7 @@ findFillets(std::vector<FaceInfo> &info, std::vector<bool> &used, std::vector<Fe
         {
             continue;
         }
-        if (fi.type == GeomAbs_Cylinder && angleAround(fi.face) >= 2 * M_PI - tol)
+        if (fi.type == GeomAbs_Cylinder && fullTurn(angleAround(fi.face), fi.face))
         {
             continue;
         }
@@ -265,7 +303,7 @@ findFillets(std::vector<FaceInfo> &info, std::vector<bool> &used, std::vector<Fe
             }
             const FaceInfo &other = info[otherFace(*a, i)];
             if (fi.type == GeomAbs_Cylinder && other.type == GeomAbs_Cylinder &&
-                sameCylinder(fi.face, other.face))
+                sameCylinder(fi.face, other.face, partSize))
             {
                 continue;
             }
@@ -369,6 +407,7 @@ std::vector<Feature> recognizeFeatures(const TopoDS_Shape &shape, const FaceGrap
     TopExp::MapShapes(shape, TopAbs_FACE, faces);
     TopExp::MapShapes(shape, TopAbs_EDGE, edges);
 
+    double partSize = partSizeOf(shape);
     int n = faces.Extent();
     std::vector<FaceInfo> info(n + 1);
     for (int i = 1; i <= n; ++i)
@@ -395,8 +434,8 @@ std::vector<Feature> recognizeFeatures(const TopoDS_Shape &shape, const FaceGrap
 
     std::vector<Feature> out;
     std::vector<bool> used(n + 1, false);
-    findHoles(info, g, used, out);
-    findFillets(info, used, out);
+    findHoles(info, g, partSize, used, out);
+    findFillets(info, partSize, used, out);
     findPocketsAndBosses(info, used, out);
     return out;
 }

@@ -1,13 +1,18 @@
 #include "topo/graph.hpp"
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
+#include <BRepCheck_Analyzer.hxx>
 #include <BRepGProp.hxx>
 #include <BRepLProp_SLProps.hxx>
 #include <BRepTools.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
+#include <GCPnts_AbscissaPoint.hxx>
 #include <GProp_GProps.hxx>
 #include <Geom2d_Curve.hxx>
+#include <Precision.hxx>
+#include <ShapeFix_Shape.hxx>
+#include <Standard_Failure.hxx>
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
@@ -17,21 +22,46 @@
 #include <algorithm>
 #include <cmath>
 #include <gp_Vec.hxx>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 
 namespace topo
 {
 
-TopoDS_Shape loadBrepString(const std::string &data)
+TopoDS_Shape loadBrepString(const std::string &data, bool *repaired)
 {
     std::istringstream in(data);
     TopoDS_Shape shape;
     BRep_Builder builder;
-    BRepTools::Read(shape, in, builder);
+    try
+    {
+        BRepTools::Read(shape, in, builder);
+    }
+    catch (const Standard_Failure &)
+    {
+        shape.Nullify();
+    }
     if (shape.IsNull())
     {
         throw std::runtime_error("failed to parse BREP");
+    }
+    bool valid = BRepCheck_Analyzer(shape).IsValid();
+    if (repaired)
+    {
+        *repaired = !valid;
+    }
+    // Top.brep needs two goes
+    for (int pass = 0; pass < 3 && !valid; ++pass)
+    {
+        ShapeFix_Shape fix(shape);
+        fix.Perform();
+        shape = fix.Shape();
+        valid = !shape.IsNull() && BRepCheck_Analyzer(shape).IsValid();
+    }
+    if (!valid)
+    {
+        throw std::runtime_error("invalid shape, ShapeFix couldn't repair it");
     }
     return shape;
 }
@@ -93,7 +123,7 @@ faceNormalAtEdge(const TopoDS_Face &face, const TopoDS_Edge &edge, double t, gp_
     }
     gp_Pnt2d uv = pc->Value(t);
     BRepAdaptor_Surface s(face);
-    BRepLProp_SLProps props(s, uv.X(), uv.Y(), 1, 1e-6);
+    BRepLProp_SLProps props(s, uv.X(), uv.Y(), 1, Precision::Confusion());
     if (!props.IsNormalDefined())
     {
         return false;
@@ -110,9 +140,15 @@ static EdgeKind classifyEdge(
     const TopoDS_Edge &edge,
     const TopoDS_Face &fa,
     const TopoDS_Face &fb,
-    double &angleDeg
+    double &angleDeg,
+    double &tolDeg
 )
 {
+    double tol = BRep_Tool::Tolerance(edge);
+    double len = GCPnts_AbscissaPoint::Length(BRepAdaptor_Curve(edge));
+    double tolRad = std::max(Precision::Angular(), len > tol ? tol / len : 0.0);
+    tolDeg = tolRad * 180.0 / M_PI;
+
     TopAbs_Orientation oa = edgeOrientationInFace(edge, fa);
     if (oa != TopAbs_FORWARD && oa != TopAbs_REVERSED)
     {
@@ -124,7 +160,7 @@ static EdgeKind classifyEdge(
     gp_Pnt p;
     gp_Vec tangent;
     c.D1(t, p, tangent);
-    if (tangent.Magnitude() < 1e-12)
+    if (tangent.Magnitude() < Precision::Confusion())
     {
         return EdgeKind::Unknown;
     }
@@ -141,7 +177,7 @@ static EdgeKind classifyEdge(
 
     double dot = na.Normalized().Dot(nb.Normalized());
     angleDeg = std::acos(std::max(-1.0, std::min(1.0, dot))) * 180.0 / M_PI;
-    if (angleDeg < 1e-3)
+    if (angleDeg < tolDeg)
     {
         return EdgeKind::Smooth;
     }
@@ -152,16 +188,27 @@ static EdgeKind classifyEdge(
 
 FaceGraph buildFaceGraph(const TopoDS_Shape &shape)
 {
-    TopTools_IndexedMapOfShape faces, edges, verts, wires;
+    TopTools_IndexedMapOfShape faces, edges, verts, wires, shells;
     TopExp::MapShapes(shape, TopAbs_FACE, faces);
     TopExp::MapShapes(shape, TopAbs_WIRE, wires);
     TopExp::MapShapes(shape, TopAbs_EDGE, edges);
     TopExp::MapShapes(shape, TopAbs_VERTEX, verts);
+    TopExp::MapShapes(shape, TopAbs_SHELL, shells);
+
+    int degenerate = 0;
+    for (int e = 1; e <= edges.Extent(); ++e)
+    {
+        if (BRep_Tool::Degenerated(TopoDS::Edge(edges(e))))
+        {
+            degenerate++;
+        }
+    }
 
     FaceGraph g;
     g.faceCount = faces.Extent();
-    g.edgeCount = edges.Extent();
+    g.edgeCount = edges.Extent() - degenerate;
     g.vertexCount = verts.Extent();
+    g.shellCount = shells.Extent();
     int loopCount = wires.Extent();
     g.eulerCharacteristic = g.vertexCount - g.edgeCount + g.faceCount - (loopCount - g.faceCount);
 
@@ -180,21 +227,44 @@ FaceGraph buildFaceGraph(const TopoDS_Shape &shape)
 
     for (int e = 1; e <= edgeToFaces.Extent(); ++e)
     {
-        const TopTools_ListOfShape &adj = edgeToFaces(e);
-        if (adj.Extent() != 2)
+        const TopoDS_Edge &edge = TopoDS::Edge(edgeToFaces.FindKey(e));
+        if (BRep_Tool::Degenerated(edge))
         {
             continue;
         }
+        const TopTools_ListOfShape &adj = edgeToFaces(e);
+
+        std::set<int> touching;
+        for (const TopoDS_Shape &f : adj)
+        {
+            touching.insert(faces.FindIndex(f));
+        }
+        if (touching.size() == 1 && adj.Extent() == 1)
+        {
+            g.freeEdgeCount++;
+        }
+        if (touching.size() > 2)
+        {
+            g.nonManifoldEdgeCount++;
+        }
+        if (adj.Extent() != 2 || touching.size() != 2)
+        {
+            continue;
+        }
+
         int fa = faces.FindIndex(adj.First());
         int fb = faces.FindIndex(adj.Last());
-        if (fa == fb)
-        {
-            continue;
-        }
-        const TopoDS_Edge &edge = TopoDS::Edge(edgeToFaces.FindKey(e));
         double ang = 0.0;
-        EdgeKind k = classifyEdge(edge, TopoDS::Face(adj.First()), TopoDS::Face(adj.Last()), ang);
-        g.arcs.push_back({edges.FindIndex(edge), fa, fb, k, ang});
+        double tolDeg = 0.0;
+        EdgeKind k =
+            classifyEdge(edge, TopoDS::Face(adj.First()), TopoDS::Face(adj.Last()), ang, tolDeg);
+        g.arcs.push_back({edges.FindIndex(edge), fa, fb, k, ang, tolDeg});
+    }
+
+    bool closed = g.freeEdgeCount == 0 && g.nonManifoldEdgeCount == 0 && g.shellCount > 0;
+    if (closed && g.eulerCharacteristic % 2 == 0)
+    {
+        g.genus = g.shellCount - g.eulerCharacteristic / 2;
     }
     return g;
 }

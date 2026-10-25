@@ -1,6 +1,6 @@
 import os
 import tempfile
-from build123d import export_brep, import_brep
+from build123d import export_brep, import_brep, import_step
 
 
 def to_brep_string(shape) -> str:
@@ -22,3 +22,7 @@ def from_brep_string(brep: str):
         return import_brep(path)
     finally:
         os.unlink(path)
+
+
+def step_to_brep_string(path) -> str:
+    return to_brep_string(import_step(path))

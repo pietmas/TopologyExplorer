@@ -7,6 +7,9 @@ name = "topoexplorer"
 version = "0.1.0"
 requires-python = ">=3.10"
 
+[project.optional-dependencies]
+dev = ["build123d", "networkx", "pytest", "ocp_vscode", "ocp_viewer"]
+
 [tool.scikit-build]
 cmake.build-type = "Debug"
 build-dir = "build/{wheel_tag}"
