@@ -26,7 +26,10 @@ def _holes(brep):
     return [f for f in te.recognize(brep) if f.type == te.FeatureType.Hole]
 
 
-@pytest.mark.parametrize("junk", ["", "not a brep at all"])
+@pytest.mark.parametrize(
+    "junk",
+    ["", "not a brep at all", "CASCADE Topology V1, (c) Matra-Datavision\nLocations 3\n1\n"],
+)
 def test_junk_is_refused(junk):
     with pytest.raises(RuntimeError):
         te.analyze(junk)
